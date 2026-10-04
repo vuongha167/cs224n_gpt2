@@ -25,6 +25,7 @@ def test_optimizer(opt_class) -> torch.Tensor:
         opt.step()
     return model.weight.detach()
 
+
 if __name__ == '__main__':
     ref = torch.tensor(np.load("optimizer_test.npy"))
     actual = test_optimizer(AdamW)
