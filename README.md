@@ -50,3 +50,25 @@ project [Implement BERT](https://web.stanford.edu/class/archive/cs/cs224n/cs224n
 
 Parts of the code are from the [`transformers`](https://github.com/huggingface/transformers)
 library ([Apache License 2.0](./LICENSE)).
+
+
+
+# Original base code by Stanford NLP, completed and modified by Vuong Ha
+
+1. Tạo một môi trường ảo hoàn toàn mới:
+
+```plaintext
+conda create -n cs224n_env python=3.8
+```
+
+2. Kích hoạt môi trường vừa tạo để cô lập hệ thống:
+
+```plaintext
+conda activate cs224n_env
+```
+
+3. Cài đặt toàn bộ thư viện cần thiết của bạn vào riêng môi trường này:
+
+```plaintext
+pip install -r requirements.txt
+```

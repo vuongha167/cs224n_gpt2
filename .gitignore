@@ -5,3 +5,10 @@
 *.pkl
 .idea/
 out/
+
+__pycache__/
+.vscode/
+venv/
+.env
+
+notebooks/
