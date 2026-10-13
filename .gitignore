@@ -12,3 +12,8 @@ venv/
 .env
 
 notebooks/
+
+docs/
+
+.claude/
+CLAUDE.md
