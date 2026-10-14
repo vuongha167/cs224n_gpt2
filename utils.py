@@ -48,6 +48,41 @@ def model_size_to_params(model_size):
         raise Exception(f'{model_size} is not supported.')
 
 
+def _to_json(obj):
+    """`json.dump` fallback for numpy / torch scalars and arrays, e.g. the labels collected by the eval loops."""
+    if hasattr(obj, 'tolist'):
+        return obj.tolist()
+    raise TypeError(f'Object of type {type(obj).__name__} is not JSON serializable')
+
+
+def save_metrics(metrics, filepath):
+    """Write the metrics of a training run (a JSON-serializable dict) to `filepath`; `visualize.py` plots them.
+
+    The training scripts rewrite the file after every epoch while notebooks/Visualize.ipynb may be reading it from
+    another kernel. The JSON is therefore written to a temporary file in the same directory and moved into place with
+    `os.replace` (atomic), so a reader sees either the previous version or the new one, never a half-written file.
+    """
+    directory = os.path.dirname(filepath) or '.'
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=directory, prefix='.tmp-', suffix='.json')
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            json.dump(metrics, f, indent=1, default=_to_json)
+        os.chmod(tmp_path, 0o644)  # mkstemp creates the file readable by its owner only
+        os.replace(tmp_path, filepath)
+    except BaseException:
+        os.remove(tmp_path)
+        raise
+
+
+def read_metrics(filepath):
+    """Return the metrics written by `save_metrics`, or an empty dict if `filepath` does not exist yet."""
+    if not os.path.exists(filepath):
+        return {}
+    with open(filepath, encoding='utf-8') as f:
+        return json.load(f)
+
+
 def is_torch_available():
     return True
 

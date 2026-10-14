@@ -31,6 +31,7 @@ from evaluation import model_eval_paraphrase, model_test_paraphrase
 from models.gpt2 import GPT2Model
 
 from optimizer import AdamW
+from utils import read_metrics, save_metrics
 
 TQDM_DISABLE = False
 
@@ -115,6 +116,16 @@ def train(args):
     optimizer = AdamW(model.parameters(), lr=lr, weight_decay=0.)
     best_dev_acc = 0
 
+    # Learning curves for visualize.py, rewritten after every epoch so that a run that is still going (or was stopped)
+    # can already be plotted. `test()` adds the dev predictions of the best checkpoint.
+    metrics = {
+        'task': 'paraphrase',
+        'config': {'model_size': args.model_size, 'lr': args.lr, 'epochs': args.epochs, 'batch_size': args.batch_size},
+        'history': [],
+        'best_epoch': None,
+    }
+    save_metrics(metrics, args.metrics_out)
+
     # Run for the specified number of epochs.
     for epoch in range(args.epochs):
         model.train()
@@ -144,9 +155,13 @@ def train(args):
 
         if dev_acc > best_dev_acc:
             best_dev_acc = dev_acc
+            metrics['best_epoch'] = epoch
             save_model(model, optimizer, args, args.filepath)
 
-        print(f"Epoch {epoch}: train loss :: {train_loss :.3f}, dev acc :: {dev_acc :.3f}")
+        metrics['history'].append({'epoch': epoch, 'train_loss': train_loss, 'dev_acc': dev_acc, 'dev_f1': dev_f1})
+        save_metrics(metrics, args.metrics_out)
+
+        print(f"Epoch {epoch}: train loss :: {train_loss :.3f}, dev acc :: {dev_acc :.3f}, dev f1 :: {dev_f1 :.3f}")
 
 
 @torch.no_grad()
@@ -172,8 +187,16 @@ def test(args):
     para_test_dataloader = DataLoader(para_test_data, shuffle=True, batch_size=args.batch_size,
                                       collate_fn=para_test_data.collate_fn)
 
-    dev_para_acc, _, dev_para_y_pred, _, dev_para_sent_ids = model_eval_paraphrase(para_dev_dataloader, model, device)
-    print(f"dev paraphrase acc :: {dev_para_acc :.3f}")
+    dev_para_acc, dev_para_f1, dev_para_y_pred, dev_para_y_true, dev_para_sent_ids = model_eval_paraphrase(
+        para_dev_dataloader, model, device)
+    print(f"dev paraphrase acc :: {dev_para_acc :.3f}, dev paraphrase f1 :: {dev_para_f1 :.3f}")
+
+    # The checkpoint name does not contain the model size, so a later run can overwrite it: the confusion matrix of
+    # this run can only be drawn from the predictions stored here.
+    metrics = read_metrics(args.metrics_out)
+    metrics['best_dev'] = {'acc': dev_para_acc, 'f1': dev_para_f1, 'y_true': dev_para_y_true,
+                           'y_pred': dev_para_y_pred}
+    save_metrics(metrics, args.metrics_out)
     test_para_y_pred, test_para_sent_ids = model_test_paraphrase(para_test_dataloader, model, device)
 
     with open(args.para_dev_out, "w+") as f:
@@ -232,6 +255,7 @@ def add_arguments(args):
 if __name__ == "__main__":
     args = get_args()
     args.filepath = f'{args.epochs}-{args.lr}-paraphrase.pt'  # Save path.
+    args.metrics_out = f'metrics/paraphrase-{args.model_size}-{args.epochs}-{args.lr}.json'  # Read by visualize.py.
     seed_everything(args.seed)  # Fix the seed for reproducibility.
     train(args)
     test(args)

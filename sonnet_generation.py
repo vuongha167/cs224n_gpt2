@@ -28,6 +28,7 @@ from evaluation import test_sonnet
 from models.gpt2 import GPT2Model
 
 from optimizer import AdamW
+from utils import save_metrics
 
 TQDM_DISABLE = False
 
@@ -163,9 +164,10 @@ def generate_sonnets(model, dataset, args, device, desc='generate'):
 
 
 def evaluate_dev_chrf(model, dev_dataset, args, device):
-    """Generate the dev sonnets with the current model and return their chrF against the gold sonnets.
+    """Generate the dev sonnets with the current model and score them with chrF against the gold sonnets.
 
     chrF plays the role of `dev_acc` in classifier.py / paraphrase_detection.py: higher is better.
+    Returns (chrF, list of (sonnet_id, text)); `train` keeps the generations of every epoch for visualize.py.
     """
     was_training = model.training
     model.eval()
@@ -178,7 +180,8 @@ def evaluate_dev_chrf(model, dev_dataset, args, device):
 
     # `test_sonnet` reads both the predictions and the gold sonnets from files, hence the round trip.
     write_sonnets(dev_sonnets, args.dev_sonnet_out)
-    return test_sonnet(test_path=args.dev_sonnet_out, gold_path=args.gold_dev_sonnet_path)
+    dev_chrf = test_sonnet(test_path=args.dev_sonnet_out, gold_path=args.gold_dev_sonnet_path)
+    return dev_chrf, dev_sonnets
 
 
 def train(args):
@@ -200,6 +203,23 @@ def train(args):
     optimizer = AdamW(model.parameters(), lr=lr)
     best_dev_chrf = float('-inf')  # -inf (instead of 0) guarantees that the first epoch is always saved.
     best_epoch = -1
+
+    # Learning curves and the dev generations of every epoch for visualize.py, rewritten after every epoch
+    # (`args.dev_sonnet_out` only keeps the last epoch). Prompts and gold sonnets are paired by position, like
+    # `test_sonnet` does.
+    gold_dev_sonnets = SonnetsDataset(args.gold_dev_sonnet_path)
+    metrics = {
+        'task': 'sonnet',
+        'config': {'model_size': args.model_size, 'lr': args.lr, 'epochs': args.epochs, 'batch_size': args.batch_size,
+                   'temperature': args.temperature, 'top_p': args.top_p},
+        'history': [],
+        'best_epoch': None,
+        'best_dev_chrf': None,
+        'dev': [{'id': sonnet_id, 'prompt': prompt, 'gold': gold}
+                for (sonnet_id, prompt), (_, gold) in zip(dev_sonnet_dataset, gold_dev_sonnets)],
+        'generations': {},  # str(epoch) -> [{'id', 'text'}], `text` = the prompt followed by the generated lines
+    }
+    save_metrics(metrics, args.metrics_out)
 
     # Run for the specified number of epochs.
     for epoch in range(args.epochs):
@@ -229,12 +249,17 @@ def train(args):
 
         # Score this epoch on the dev set, then keep the checkpoint only if it is the best one so far
         # (same pattern as `best_dev_acc` in classifier.py and paraphrase_detection.py).
-        dev_chrf = evaluate_dev_chrf(model, dev_sonnet_dataset, args, device)
+        dev_chrf, dev_sonnets = evaluate_dev_chrf(model, dev_sonnet_dataset, args, device)
 
         if dev_chrf > best_dev_chrf:
             best_dev_chrf = dev_chrf
             best_epoch = epoch
             save_model(model, optimizer, args, args.filepath)
+
+        metrics['history'].append({'epoch': epoch, 'train_loss': train_loss, 'dev_chrf': dev_chrf})
+        metrics['best_epoch'], metrics['best_dev_chrf'] = best_epoch, best_dev_chrf
+        metrics['generations'][str(epoch)] = [{'id': sonnet_id, 'text': text} for sonnet_id, text in dev_sonnets]
+        save_metrics(metrics, args.metrics_out)
 
         print(f"Epoch {epoch}: train loss :: {train_loss :.3f}, dev chrF :: {dev_chrf :.3f}, "
               f"best dev chrF :: {best_dev_chrf :.3f} (epoch {best_epoch})")
@@ -314,6 +339,7 @@ def add_arguments(args):
 if __name__ == "__main__":
     args = get_args()
     args.filepath = f'{args.epochs}-{args.lr}-sonnet.pt'  # Save path.
+    args.metrics_out = f'metrics/sonnet-{args.model_size}-{args.epochs}-{args.lr}.json'  # Read by visualize.py.
     seed_everything(args.seed)  # Fix the seed for reproducibility.
     best_dev_chrf, best_epoch = train(args)
     generate_submission_sonnets(args)

@@ -16,6 +16,7 @@ from sklearn.metrics import f1_score, accuracy_score
 
 from models.gpt2 import GPT2Model
 from optimizer import AdamW
+from utils import read_metrics, save_metrics
 from tqdm import tqdm
 
 TQDM_DISABLE = False
@@ -273,6 +274,20 @@ def train(args):
     optimizer = AdamW(model.parameters(), lr=lr)
     best_dev_acc = 0
 
+    # Learning curves for visualize.py, rewritten after every epoch so that a run that is still going (or was stopped)
+    # can already be plotted. `test()` adds the dev predictions of the best checkpoint.
+    metrics = {
+        'task': 'sentiment',
+        'dataset': args.dataset,
+        'mode': args.fine_tune_mode,
+        'config': {'lr': args.lr, 'epochs': args.epochs, 'batch_size': args.batch_size,
+                   'hidden_dropout_prob': args.hidden_dropout_prob},
+        'num_labels': num_labels,
+        'history': [],
+        'best_epoch': None,
+    }
+    save_metrics(metrics, args.metrics_out)
+
     # Run for the specified number of epochs.
     for epoch in range(args.epochs):
         model.train()
@@ -303,9 +318,15 @@ def train(args):
 
         if dev_acc > best_dev_acc:
             best_dev_acc = dev_acc
+            metrics['best_epoch'] = epoch
             save_model(model, optimizer, args, config, args.filepath)
 
-        print(f"Epoch {epoch}: train loss :: {train_loss:.3f}, train acc :: {train_acc:.3f}, dev acc :: {dev_acc:.3f}")
+        metrics['history'].append({'epoch': epoch, 'train_loss': train_loss, 'train_acc': train_acc,
+                                   'train_f1': train_f1, 'dev_acc': dev_acc, 'dev_f1': dev_f1})
+        save_metrics(metrics, args.metrics_out)
+
+        print(f"Epoch {epoch}: train loss :: {train_loss:.3f}, train acc :: {train_acc:.3f}, train f1 :: {train_f1:.3f}, "
+              f"dev acc :: {dev_acc:.3f}, dev f1 :: {dev_f1:.3f}")
 
 
 def test(args):
@@ -331,11 +352,17 @@ def test(args):
         dev_acc, dev_f1, dev_pred, dev_true, dev_sents, dev_sent_ids = model_eval(dev_dataloader, model, device)
         print('DONE DEV')
 
+        # The checkpoint file is overwritten by the next run (see `filepath` in __main__), so the confusion matrix of
+        # this run can only be drawn from the predictions stored here.
+        metrics = read_metrics(args.metrics_out)
+        metrics['best_dev'] = {'acc': dev_acc, 'f1': dev_f1, 'y_true': dev_true, 'y_pred': dev_pred}
+        save_metrics(metrics, args.metrics_out)
+
         test_pred, test_sents, test_sent_ids = model_test_eval(test_dataloader, model, device)
         print('DONE Test')
 
         with open(args.dev_out, "w+") as f:
-            print(f"dev acc :: {dev_acc:.3f}")
+            print(f"dev acc :: {dev_acc:.3f}, dev f1 :: {dev_f1:.3f}")
             f.write(f"id \t Predicted_Sentiment \n")
             for p, s in zip(dev_sent_ids, dev_pred):
                 f.write(f"{p}, {s} \n")
@@ -381,7 +408,9 @@ if __name__ == "__main__":
         test='data/ids-sst-test-student.csv',
         fine_tune_mode=args.fine_tune_mode,
         dev_out='predictions/' + args.fine_tune_mode + '-sst-dev-out.csv',
-        test_out='predictions/' + args.fine_tune_mode + '-sst-test-out.csv'
+        test_out='predictions/' + args.fine_tune_mode + '-sst-test-out.csv',
+        dataset='sst',
+        metrics_out='metrics/sentiment-sst-' + args.fine_tune_mode + '.json'
     )
 
     train(config)
@@ -402,7 +431,9 @@ if __name__ == "__main__":
         test='data/ids-cfimdb-test-student.csv',
         fine_tune_mode=args.fine_tune_mode,
         dev_out='predictions/' + args.fine_tune_mode + '-cfimdb-dev-out.csv',
-        test_out='predictions/' + args.fine_tune_mode + '-cfimdb-test-out.csv'
+        test_out='predictions/' + args.fine_tune_mode + '-cfimdb-test-out.csv',
+        dataset='cfimdb',
+        metrics_out='metrics/sentiment-cfimdb-' + args.fine_tune_mode + '.json'
     )
 
     train(config)
